@@ -1,0 +1,568 @@
+---
+title: "MDA9159 Final Project"
+author: 
+- "Bowen Wang (bwang489, 251139226)"
+- "Runcong Wu (rwu252, 251148344)"
+date: "2020-11-27"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# load packages
+library(tidyverse)
+library(fastDummies)
+library(lmtest)
+library(faraway)
+library(MASS)
+library(glmnet)
+```
+
+## Response: Life expectancy
+## Predictors: The rest columns
+## 1. Preprocessing
+```{r}
+# load the csv data
+life_data <- read.csv("Life Expectancy Data.csv")
+
+# Check if there is any missing value(number of missing values = 2563)
+sum(is.na(life_data))
+
+# Function na.omit removes observation with missing values
+life_data2 <- na.omit(life_data)
+
+
+# Drop Country column
+life_data3 <- subset(life_data2, select = -c(Country))
+
+# rename columns
+life_data4 <- life_data3 %>%
+  rename(Life_expectancy = Life.expectancy,
+         Adult_Mortality = Adult.Mortality,
+         infant_deaths = infant.deaths,
+         percentage_expenditure = percentage.expenditure,
+         Hepatitis_B = Hepatitis.B,
+         under_five_deaths = under.five.deaths,
+         Total_expenditure = Total.expenditure,
+         HIV_AIDS = HIV.AIDS,
+         thinness_1_19_years = thinness..1.19.years,
+         thinness_5_9_years = thinness.5.9.years,
+         Income_composition_of_resources = Income.composition.of.resources
+         )
+
+# drop data in 2015
+life_data5 <- life_data4 %>%
+  filter(Year != 2015)
+
+# categorical variables -> factor type
+life_data5$Year <- factor(life_data5$Year)
+life_data5$Status <- factor(life_data5$Status)
+glimpse(life_data5)
+```
+
+
+#### Data Spliting
+```{r}
+# Let's first split the data into training and test data (80/20)
+set.seed(108)
+n = nrow(life_data5)
+idx_tr <- sample(n, round(0.8*n), replace=FALSE)
+
+# Define training and test data
+train = life_data5[idx_tr,]
+test = life_data5[-idx_tr,]
+  
+# Define y and X
+y <- life_data5$Life_expectancy
+X <- model.matrix(Life_expectancy ~ ., life_data5)[, -1] 
+y_train <- y[idx_tr]
+X_train <- X[idx_tr,]
+
+y_test <- y[-idx_tr]
+X_test <- X[-idx_tr,]
+
+nrow(train)
+nrow(test)
+length(y_train)
+nrow(X_train)
+length(y_test)
+nrow(X_test)
+```
+
+
+## 2. Data Vistualization
+
+#### Number of Observations in each Year
+```{r}
+#life_data5 %>%
+#  group_by(Year) %>%
+#  summarise(n = n(), .groups = 'drop')
+
+# with 2015
+life_data4 %>%
+  ggplot(aes(x = Year)) + geom_bar() + labs(y = 'Number of Observations', title = 'Number of Observations in each Year (with 2015)')
+
+# without 2 rows in 2015
+life_data5 %>%
+  ggplot(aes(x = Year)) + geom_bar() + labs(y = 'Number of Observations', title = 'Number of Observations in each Year (without 2015)')
+```
+
+#### Variable Distributions
+```{r}
+# response
+life_data5 %>%
+  ggplot(aes(x = Life_expectancy)) + geom_histogram(bins = 20, color = 'blue', fill = 'lightblue') + labs(y = 'Number of Observations', x = "Life Expectancy", title = 'Distribution of Life Expectancy') + theme_light()
+
+# predictors
+life_data5 %>%
+  ggplot(aes(x = Income_composition_of_resources)) + geom_histogram(bins = 10, color = 'blue', fill = 'lightblue') + labs(y = 'Number of Observations', x = "Income composition of resources", title = 'Distribution of Income composition of resources') + theme_light()
+
+life_data5 %>%
+  ggplot(aes(x = Hepatitis_B)) + geom_histogram(bins = 10, color = 'blue', fill = 'lightblue') + labs(y = 'Number of Observations', x = "Hepatitis B (HepB) immunization coverage among 1-year-olds (%)", title = 'Distribution of Hepatitis B') + theme_light()
+
+life_data5 %>%
+  ggplot(aes(x = Schooling)) + geom_histogram(bins = 10, color = 'blue', fill = 'lightblue') + labs(y = 'Number of Observations', x = "Number of Years of Schooling", title = 'Distribution of Schooling') + theme_light()
+
+life_data5 %>%
+  ggplot(aes(x = Adult_Mortality)) + geom_histogram(bins = 10, color = 'blue', fill = 'lightblue') + labs(y = 'Number of Observations', x = "Adult Mortality Rates of both sexes (number of dying between 15 and 60 years per 1000 population)", title = 'Distribution of Adult Mortality') + theme_light()
+```
+
+#### generate summary statistics
+```{r}
+life_exp_stat <- life_data5 %>%
+  summarise("Mean" = mean(Life_expectancy),
+            "Median" = median(Life_expectancy),
+            "SD" = sd(Life_expectancy),
+            "Max" = max(Life_expectancy),
+            "Min" = min(Life_expectancy))
+
+income_stat <- life_data5 %>%
+  summarise("Mean" = mean(Income_composition_of_resources),
+            "Median" = median(Income_composition_of_resources),
+            "SD" = sd(Income_composition_of_resources),
+            "Max" = max(Income_composition_of_resources),
+            "Min" = min(Income_composition_of_resources))
+
+Hepatitis_B_stat <- life_data5 %>%
+  summarise("Mean" = mean(Hepatitis_B),
+            "Median" = median(Hepatitis_B),
+            "SD" = sd(Hepatitis_B),
+            "Max" = max(Hepatitis_B),
+            "Min" = min(Hepatitis_B))
+
+Adult_Mortality_stat <- life_data5 %>%
+  summarise("Mean" = mean(Adult_Mortality),
+            "Median" = median(Adult_Mortality),
+            "SD" = sd(Adult_Mortality),
+            "Max" = max(Adult_Mortality),
+            "Min" = min(Adult_Mortality))
+
+Schooling_stat <- life_data5 %>%
+  summarise("Mean" = mean(Schooling),
+            "Median" = median(Schooling),
+            "SD" = sd(Schooling),
+            "Max" = max(Schooling),
+            "Min" = min(Schooling))
+
+total_stat <- rbind(life_exp_stat, income_stat, Hepatitis_B_stat, Adult_Mortality_stat, Schooling_stat)
+
+
+row.names(total_stat) <- c("Life expectancy (in years)", "Income composition of resources (0-1)", "Hepatitis B (%)", "Adult Mortality (over 1000 individuals)", "Schooling (in years)")
+total_stat
+```
+
+
+
+## 3. Build models
+#### Model1: Full model using all 20 variables
+```{r}
+model1 <- lm(Life_expectancy ~ . , data = train)
+summary(model1)
+```
+
+Check model assumptions
+```{r}
+# Model diagnostic plots
+par(mfrow=c(2,2))
+plot(model1)
+
+# BP test: test equal variance assumption
+bptest(model1)
+
+# SW test: test normality assumption
+shapiro.test(resid(model1))
+```
+
+
+#### Model2: Remove influential points, assume these data points are measurement error.
+```{r}
+# Find influencial points
+# Obtains Cook's distances
+cook_dist = cooks.distance(model1)
+
+# We have 105 influential observations
+sum(cook_dist > 4/length(cook_dist))
+
+# Get the indices
+ind = which(cook_dist > 4/length(cook_dist))
+
+# build model
+train2 <- train[-ind,]
+
+# repeat model assumptions check in part b
+model2 <- lm(Life_expectancy ~ . , data = train2)
+summary(model2)
+```
+
+
+Check model assumptions
+```{r}
+# Model diagnostic plots
+par(mfrow=c(2,2))
+plot(model2)
+
+# BP test: test equal variance assumption
+bptest(model2)
+
+# SW test: test normality assumption
+shapiro.test(resid(model2))
+```
+
+#### Model3: Use Box-cox Transformation
+```{r}
+# choose lambda = 0.5
+boxcox(model1, lambda = seq(0, 3, by = 0.05))
+
+# transform Y using Box-Cox method (lambda = 1.0)
+lambda = 1.0
+model3 <- lm(((Life_expectancy^(lambda)-1)/(lambda)) ~ ., data=train)
+summary(model3)
+
+# The optimal lambda is 1.0, the transform function g(Y) = Y-1
+# This is not a transformation, we need to try other approaches.
+```
+```{r}
+summary(model3)
+```
+
+
+Check model assumptions
+```{r}
+# Model diagnostic plots
+par(mfrow=c(2,2))
+plot(model3)
+
+# BP test: test equal variance assumption
+bptest(model3)
+
+# SW test: test normality assumption
+shapiro.test(resid(model3))
+```
+
+
+#### Model4: Stepwise selection with BIC
+```{r}
+# number of observation
+n = nrow(train)
+
+# null model
+model_null <- lm(Life_expectancy ~ 1, data = train)
+
+# forward stepwise selection with BIC
+model4 = step(model_null,
+                    scope = Life_expectancy ~ Year + Status + Adult_Mortality + infant_deaths + Alcohol + percentage_expenditure + Hepatitis_B + Measles + BMI + under_five_deaths + Polio + Total_expenditure + Diphtheria + HIV_AIDS + GDP + Population + thinness_1_19_years + thinness_5_9_years + Income_composition_of_resources + Schooling,
+                    direction = "both",
+                    trace = 0,
+                    k = log(n))
+summary(model4)
+```
+
+
+Check model assumptions
+```{r}
+# Model diagnostic plots
+par(mfrow=c(2,2))
+plot(model4)
+
+# BP test: test equal variance assumption
+bptest(model4)
+
+# SW test: test normality assumption
+shapiro.test(resid(model4))
+```
+
+
+Plot the remaining predictors after stepwise selection, strong multicollinearity between `under_five_deaths` and `infant_deaths`
+```{r}
+# pairs plot
+pairs(~ Life_expectancy + Schooling + HIV_AIDS + Adult_Mortality + Income_composition_of_resources + percentage_expenditure + BMI + under_five_deaths + infant_deaths, data = train)
+```
+
+```{r}
+# Calculate Variance Inflation Factor: under_five_deaths and infant_deaths are extremely large!
+vif(model4)
+```
+
+
+#### Model5: Drop `under_five_deaths` due to Multicollinearity
+```{r}
+model5 <- lm(Life_expectancy ~ Schooling + HIV_AIDS + Adult_Mortality + Income_composition_of_resources + percentage_expenditure + BMI + under_five_deaths, data = train)
+
+summary(model5)
+```
+
+
+```{r}
+# Model diagnostic plots
+par(mfrow=c(2,2))
+plot(model5)
+
+# BP test: test equal variance assumption
+bptest(model5)
+
+# SW test: test normality assumption
+shapiro.test(resid(model5))
+```
+
+
+
+#### Model6: Add polynomial terms (quadratic + cubic) based on model5
+```{r}
+model6 <- lm(Life_expectancy ~ I(Schooling^2) + I(HIV_AIDS^2) + I(Adult_Mortality^2) + I(Income_composition_of_resources^2) + I(percentage_expenditure^2) + I(BMI^2) + I(infant_deaths^2) 
+             + I(Schooling^3) + I(HIV_AIDS^3) + I(Adult_Mortality^3) + I(Income_composition_of_resources^3) + I(percentage_expenditure^3) + I(BMI^3) + I(infant_deaths^3) 
+             + Schooling + HIV_AIDS + Adult_Mortality + Income_composition_of_resources + percentage_expenditure + BMI + infant_deaths, data = train)
+summary(model6)
+```
+
+
+Check model assumptions
+```{r}
+# Model diagnostic plots
+par(mfrow=c(2,2))
+plot(model6)
+
+# BP test: test equal variance assumption
+bptest(model6)
+
+# SW test: test normality assumption
+shapiro.test(resid(model6))
+```
+
+#### Model 7: Stepwise on both direction with polynomial model
+```{r}
+# number of observation
+n = nrow(train)
+
+# null model
+model_null <- lm(Life_expectancy ~ 1, data = train)
+
+# forward stepwise selection with BIC
+model7 = step(model6,
+                    scope = Life_expectancy ~ I(Schooling^2) + I(HIV_AIDS^2) + I(Adult_Mortality^2) + I(Income_composition_of_resources^2) + I(percentage_expenditure^2) + I(BMI^2) + I(infant_deaths^2) 
+             + I(Schooling^3) + I(HIV_AIDS^3) + I(Adult_Mortality^3) + I(Income_composition_of_resources^3) + I(percentage_expenditure^3) + I(BMI^3) + I(infant_deaths^3) 
+             + Schooling + HIV_AIDS + Adult_Mortality + Income_composition_of_resources + percentage_expenditure + BMI + infant_deaths,
+                    direction = "both",
+                    trace = 0,
+                    k = log(n))
+summary(model7)
+```
+```{r}
+# Model diagnostic plots
+par(mfrow=c(2,2))
+plot(model7)
+
+# BP test: test equal variance assumption
+bptest(model7)
+
+# SW test: test normality assumption
+shapiro.test(resid(model7))
+```
+
+
+#### Model8: LASSO regression
+```{r}
+fit_lasso_cv = cv.glmnet(X_train, y_train, alpha = 1)
+
+bestlam_lasso = fit_lasso_cv$lambda.min
+
+model8 = glmnet(X_train, y_train, alpha = 1, lambda = bestlam_lasso)
+
+# plot
+bestlam_lasso
+
+coef(model8)
+pred_lasso_train = predict(model8, s = bestlam_lasso, newx = X_train)
+lasso_sse = sum((y_train-pred_lasso_train)^2)
+aic_lasso = n*log(lasso_sse/n) + 2*nrow(coef(model8))
+aic_lasso
+bic_lasso = n*log(lasso_sse/n) + log(n)*nrow(coef(model8))
+bic_lasso
+y_train_mean = mean(y_train)
+adj_r2_lasso = 1-((n-1)/(n-nrow(coef(model8))))*lasso_sse/sum((y_train-y_train_mean)^2)
+adj_r2_lasso
+
+X = model.matrix(model_null) # X model matrix
+hat_matrix = X%*%(solve(t(X)%*%X)%*%t(X)) 
+press_lasso = sum(((y_train-pred_lasso_train)/(1-diag(hat_matrix)))^2)/n
+press_lasso
+```
+
+
+
+
+#### Model9: Ridge regression
+```{r}
+fit_ridge_cv = cv.glmnet(X_train, y_train, alpha = 0)
+
+bestlam_ridge = fit_ridge_cv$lambda.min
+
+model9 = glmnet(X_train, y_train, alpha = 0, lambda = bestlam_ridge)
+
+# plot
+bestlam_ridge
+
+coef(model9)
+
+pred_ridge_train = predict(model9, s = bestlam_ridge, newx = X_train)
+ridge_sse = sum((y_train-pred_ridge_train)^2)
+aic_ridge = n*log(ridge_sse/n) + 2*nrow(coef(model9))
+aic_ridge
+bic_ridge = n*log(ridge_sse/n) + log(n)*nrow(coef(model9))
+bic_ridge
+adj_r2_ridge = 1-((n-1)/(n-nrow(coef(model9))))*ridge_sse/sum((y_train-y_train_mean)^2)
+adj_r2_ridge
+press_ridge = sum(((y_train-pred_ridge_train)/(1-diag(hat_matrix)))^2)/n
+press_ridge
+```
+
+
+## 4.Check model performance
+
+#### In-sample metrics: AIC, BIC, AdjR^2 (model8 & model9 will be test on MSE)
+```{r}
+# AIC: model2
+AIC(model1,model2,model3,model4,model5,model6,model7)
+
+
+
+# BIC: model2
+BIC(model1,model2,model3,model4,model5,model6,model7)
+
+# Adjusted_R2: model 6
+adj_r2 <- c(
+summary(model1)$adj.r.squared,
+summary(model2)$adj.r.squared,
+summary(model3)$adj.r.squared,
+summary(model4)$adj.r.squared,
+summary(model5)$adj.r.squared,
+summary(model6)$adj.r.squared,
+summary(model7)$adj.r.squared
+)
+adj_r2
+
+# PRESS: model2
+PRESS <- c(
+sum((resid(model1)/(1-hatvalues(model1)))^2)/n,
+sum((resid(model2)/(1-hatvalues(model2)))^2)/n,
+sum((resid(model3)/(1-hatvalues(model3)))^2)/n,
+sum((resid(model4)/(1-hatvalues(model4)))^2)/n,
+sum((resid(model5)/(1-hatvalues(model5)))^2)/n,
+sum((resid(model6)/(1-hatvalues(model6)))^2)/n,
+sum((resid(model7)/(1-hatvalues(model7)))^2)/n
+)
+
+PRESS
+```
+
+
+#### Out of sample metrics: MSE
+```{r}
+compute_MSE <- function(model, newdata, y){
+  y_pred = predict(model, newdata=newdata)
+  mse <- mean((y-y_pred)^2)
+  mse
+}
+
+# MSE on training dataset
+# first 7 models
+MSE_train <- c(
+  compute_MSE(model1, train, y_train),
+  compute_MSE(model2, train, y_train),
+  compute_MSE(model3, train, y_train),
+  compute_MSE(model4, train, y_train),
+  compute_MSE(model5, train, y_train),
+  compute_MSE(model6, train, y_train),
+  compute_MSE(model7, train, y_train)
+)
+
+# glmnet models
+
+mse_lasso_train = mean((y_train-pred_lasso_train)^2)
+
+
+mse_ridge_train = mean((y_train-pred_ridge_train)^2)
+
+MSE_train[8] = mse_lasso_train
+MSE_train[9] = mse_ridge_train
+
+# MSE on test dataset
+# first 7 models
+MSE_test <- c(
+  compute_MSE(model1, test, y_test),
+  compute_MSE(model2, test, y_test),
+  compute_MSE(model3, test, y_test),
+  compute_MSE(model4, test, y_test),
+  compute_MSE(model5, test, y_test),
+  compute_MSE(model6, test, y_test),
+  compute_MSE(model7, test, y_test)
+)
+
+# glmnet models
+pred_lasso_test = predict(model8, s = bestlam_lasso, newx = X_test)
+mse_lasso_test = mean((y_test-pred_lasso_test)^2)
+
+pred_ridge_test = predict(model9, s = bestlam_ridge, newx = X_test)
+mse_ridge_test = mean((y_test-pred_ridge_test)^2)
+
+MSE_test[8] = mse_lasso_test
+MSE_test[9] = mse_ridge_test
+
+
+# print the results: model6 is the best model
+MSE_train
+MSE_test
+```
+
+
+#### Vistualize the results
+```{r}
+model <- c('Model1','Model2','Model3','Model4','Model5','Model6','Model7','Model8','Model9',
+           'Model1','Model2','Model3','Model4','Model5','Model6','Model7','Model8','Model9')
+condition <- c(rep("Training MSE", 9), rep("Testing MSE", 9))
+
+mse <- c(MSE_train, MSE_test)
+
+mse_plot <- data.frame(model, condition, mse)
+
+mse_plot %>%
+  ggplot(aes(fill=condition, y=mse, x=model)) + geom_bar(position="dodge", stat="identity") + coord_flip()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
